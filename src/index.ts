@@ -11,10 +11,7 @@ type Router = Map<
   ((request: RequestWithParams, server: Server) => Response) | Router
 >;
 
-export const routes: Router = new Map<
-  string,
-  (request: RequestWithParams, server: Server) => Response
->();
+export const routes: Router = new Map();
 
 routes.set("/test/(?<paramOne>.*)/ha", (request) => {
   const url = new URL(request.url);
@@ -23,17 +20,55 @@ routes.set("/test/(?<paramOne>.*)/ha", (request) => {
   );
 });
 
+routes.set(
+  "/api",
+  new Map([
+    [
+      "/hello_world",
+      (request) => {
+        return new Response();
+      },
+    ],
+  ])
+);
+
+const fullRoutes: [
+  string,
+  (request: RequestWithParams, server: Server) => Response
+][] = [];
+
+const queue: [
+  string,
+  ((request: RequestWithParams, server: Server) => Response) | Router
+][] = Array.from(routes.entries());
+
+while (queue.length > 0) {
+  const [routeName, callbackOrNest] = queue[0];
+  if (typeof callbackOrNest === "function") {
+    fullRoutes.push([routeName, callbackOrNest]);
+  } else {
+    const test = Array.from(callbackOrNest.entries()).map(([name, cb]) => [
+      `${routeName}${name}`,
+      cb,
+    ]) as [
+      string,
+      ((request: RequestWithParams, server: Server) => Response) | Router
+    ][];
+    queue.push(...test);
+  }
+  queue.shift();
+}
+
 Bun.serve({
   port: 3001,
   fetch(request, server) {
     const url = new URL(request.url);
-    const regexRoutes = Array.from(routes.keys());
-    for (let i = 0; i < regexRoutes.length; i++) {
-      const regex = RegExp(`^${regexRoutes[i]}$`, "i");
+    for (let i = 0; i < fullRoutes.length; i++) {
+      const regex = RegExp(`^${fullRoutes[i]}`, "i");
       if (regex.test(url.pathname)) {
         const output = regex.exec(url.pathname);
         console.log(output?.groups);
-        const response = routes.get(regexRoutes[i]);
+        const [_, response] = fullRoutes[i];
         const requestWithParams = request;
         (requestWithParams as RequestWithParams).params = output?.groups || {};
         if (response) {
@@ -42,6 +77,6 @@ Bun.serve({
       }
     }
 
-    return new Response();
+    return new Response("Route not found", { status: 404 });
   },
 });
